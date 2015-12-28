@@ -57,6 +57,8 @@ import com.corundumstudio.socketio.scheduler.SchedulerKey.Type;
 import com.corundumstudio.socketio.store.StoreFactory;
 import com.corundumstudio.socketio.store.pubsub.ConnectMessage;
 import com.corundumstudio.socketio.store.pubsub.PubSubStore;
+import com.newrelic.api.agent.NewRelic;
+import com.newrelic.api.agent.Trace;
 
 @Sharable
 public class AuthorizeHandler extends ChannelInboundHandlerAdapter implements Disconnectable {
@@ -100,20 +102,27 @@ public class AuthorizeHandler extends ChannelInboundHandlerAdapter implements Di
     }
 
     @Override
+    @Trace(dispatcher = true)
     public void channelRead(ChannelHandlerContext ctx, Object msg) throws Exception {
         SchedulerKey key = new SchedulerKey(Type.PING_TIMEOUT, ctx.channel());
         disconnectScheduler.cancel(key);
 
         if (msg instanceof FullHttpRequest) {
             FullHttpRequest req = (FullHttpRequest) msg;
+            
+    		NewRelic.addCustomParameter("http_mode", req.getMethod().name());
+    		NewRelic.addCustomParameter("http_url", String.valueOf(req.getUri()));
+    		
             Channel channel = ctx.channel();
             QueryStringDecoder queryDecoder = new QueryStringDecoder(req.getUri());
 
             if (!configuration.isAllowCustomRequests()
                     && !queryDecoder.path().startsWith(connectPath)) {
-                HttpResponse res = new DefaultHttpResponse(HTTP_1_1, HttpResponseStatus.BAD_REQUEST);
+                HttpResponse res = new DefaultHttpResponse(HTTP_1_1, HttpResponseStatus.BAD_REQUEST);         
                 channel.writeAndFlush(res).addListener(ChannelFutureListener.CLOSE);
                 req.release();
+                
+                NewRelic.addCustomParameter("http_status_code", HttpResponseStatus.BAD_REQUEST.code());
                 log.warn("Blocked wrong request! url: {}, ip: {}", queryDecoder.path(), channel.remoteAddress());
                 return;
             }
@@ -122,6 +131,7 @@ public class AuthorizeHandler extends ChannelInboundHandlerAdapter implements Di
             if (queryDecoder.path().equals(connectPath)
                     && sid == null) {
                 String origin = req.headers().get(HttpHeaders.Names.ORIGIN);
+                NewRelic.addCustomParameter("origin", origin);
                 if (!authorize(ctx, channel, origin, queryDecoder.parameters(), req)) {
                     req.release();
                     return;
@@ -155,6 +165,7 @@ public class AuthorizeHandler extends ChannelInboundHandlerAdapter implements Di
             HttpResponse res = new DefaultHttpResponse(HTTP_1_1, HttpResponseStatus.UNAUTHORIZED);
             channel.writeAndFlush(res)
                     .addListener(ChannelFutureListener.CLOSE);
+            NewRelic.addCustomParameter("http_status_code", HttpResponseStatus.UNAUTHORIZED.code());
             log.debug("Handshake unauthorized, query params: {} headers: {}", params, headers);
             return false;
         }
@@ -167,6 +178,7 @@ public class AuthorizeHandler extends ChannelInboundHandlerAdapter implements Di
 
             HttpResponse res = new DefaultHttpResponse(HTTP_1_1, HttpResponseStatus.UNAUTHORIZED);
             channel.writeAndFlush(res).addListener(ChannelFutureListener.CLOSE);
+            NewRelic.addCustomParameter("http_status_code", HttpResponseStatus.UNAUTHORIZED.code());
             return false;
         }
 

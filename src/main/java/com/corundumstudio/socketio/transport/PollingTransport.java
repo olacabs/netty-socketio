@@ -45,6 +45,8 @@ import com.corundumstudio.socketio.messages.PacketsMessage;
 import com.corundumstudio.socketio.messages.XHROptionsMessage;
 import com.corundumstudio.socketio.messages.XHRPostMessage;
 import com.corundumstudio.socketio.protocol.PacketDecoder;
+import com.newrelic.api.agent.NewRelic;
+import com.newrelic.api.agent.Trace;
 
 @Sharable
 public class PollingTransport extends ChannelInboundHandlerAdapter {
@@ -108,10 +110,18 @@ public class PollingTransport extends ChannelInboundHandlerAdapter {
         }
         ctx.fireChannelRead(msg);
     }
-
+    
+    @Trace(dispatcher = true)
     private void handleMessage(FullHttpRequest req, UUID sessionId, QueryStringDecoder queryDecoder, ChannelHandlerContext ctx)
                                                                                 throws IOException {
+    		
+    		NewRelic.addCustomParameter("session_id", String.valueOf(sessionId));
+    		NewRelic.addCustomParameter("http_mode", req.getMethod().name());
+    		NewRelic.addCustomParameter("http_url", String.valueOf(req.getUri()));
+    		
             String origin = req.headers().get(HttpHeaders.Names.ORIGIN);
+            NewRelic.addCustomParameter("origin", origin);
+            
             if (queryDecoder.parameters().containsKey("disconnect")) {
                 ClientHead client = clientsBox.get(sessionId);
                 client.onChannelDisconnect();
@@ -175,8 +185,9 @@ public class PollingTransport extends ChannelInboundHandlerAdapter {
     }
 
     private void sendError(ChannelHandlerContext ctx) {
-        HttpResponse res = new DefaultHttpResponse(HTTP_1_1, HttpResponseStatus.INTERNAL_SERVER_ERROR);
+        HttpResponse res = new DefaultHttpResponse(HTTP_1_1, HttpResponseStatus.EXPECTATION_FAILED);
         ctx.channel().writeAndFlush(res).addListener(ChannelFutureListener.CLOSE);
+        NewRelic.addCustomParameter("http_status_code", HttpResponseStatus.EXPECTATION_FAILED.code());
     }
 
 }
